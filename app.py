@@ -1,8 +1,12 @@
 import streamlit as st
 from dotenv import load_dotenv
 import os
-from langchain.document_loaders import TextLoader, DirectoryLoader
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.document_loaders import TextLoader, DirectoryLoader, JSONLoader
+from langchain.text_splitter import (
+    RecursiveCharacterTextSplitter,
+    Language,
+)
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.chat_models import ChatOpenAI
@@ -11,6 +15,7 @@ from langchain.chains import ConversationalRetrievalChain
 from htmlTemplates import css, bot_template, user_template
 import tempfile
 import subprocess
+import uuid
 
 
 def clone_github_repo(github_url, local_path):
@@ -23,46 +28,156 @@ def clone_github_repo(github_url, local_path):
 
 
 def load_github_repo(local_path):
-    extensions = {".js", "jsx", "ts", "tsx", ".css", ".html", ".md", ".txt"}
-    for ext in extensions:
+    # Language to extension mapping
+    lang_to_ext = {
+        "cpp": [".cpp"],
+        "go": [".go"],
+        "java": [".java"],
+        "js": [".js", ".jsx", ".ts", ".tsx"],
+        "php": [".php"],
+        "proto": [".proto"],
+        "python": [".py"],
+        "rst": [".rst"],
+        "ruby": [".rb"],
+        "rust": [".rs"],
+        "scala": [".scala"],
+        "swift": [".swift"],
+        "markdown": [".md"],
+        "latex": [".tex"],
+        "html": [".html", ".htm", ".css", "scss"],
+        "sol": [".sol"],
+    }
+
+    text_extensions = {".txt", ".json"}
+
+    documents_dict = {}
+    file_type_counts = {}
+
+    # Process code files
+    for lang, exts in lang_to_ext.items():
+        for ext in exts:
+            glob_pattern = f"**/*{ext}"
+            try:
+                loader = DirectoryLoader(local_path, glob=glob_pattern)
+                loaded_documents = loader.load() if callable(loader.load) else []
+                if loaded_documents:
+                    file_type_counts[ext] = len(loaded_documents)
+                    for doc in loaded_documents:
+                        file_path = doc.metadata["source"]
+                        relative_path = os.path.relpath(file_path, local_path)
+                        doc.metadata["source"] = relative_path
+                        doc.metadata["file_id"] = str(uuid.uuid4())
+                        documents_dict[doc.metadata["file_id"]] = doc
+
+                    # Display the results for this file type
+                    st.write(
+                        f"Processed {len(loaded_documents)} documents with extension {ext}."
+                    )
+
+            except Exception as e:
+                st.write(f"Error processing file type: {ext}, Exception: {str(e)}")
+
+        # Process text files
+    for ext in text_extensions:
         glob_pattern = f"**/*{ext}"
         try:
-            loader = DirectoryLoader(local_path, glob=glob_pattern)
+            # Select appropriate loader class based on extension
+            if ext == ".json":
+                loader_cls = JSONLoader
+            elif ext == ".txt":
+                loader_cls = TextLoader
+            else:
+                raise ValueError(f"Unsupported extension {ext} encountered.")
+
+            loader = DirectoryLoader(
+                local_path,
+                glob=glob_pattern,
+                loader_cls=loader_cls,  # Use selected loader class
+            )
             loaded_documents = loader.load() if callable(loader.load) else []
             if loaded_documents:
-                st.write(f"Loaded {len(loaded_documents)} documents of type {ext}")
+                # Filter out package-lock.json after loading if dealing with json files
+                if ext == ".json":
+                    loaded_documents = [
+                        doc
+                        for doc in loaded_documents
+                        if "package-lock.json" not in doc.metadata["source"]
+                    ]
+
+                file_type_counts[ext] = len(loaded_documents)
+                for doc in loaded_documents:
+                    file_path = doc.metadata["source"]
+                    relative_path = os.path.relpath(file_path, local_path)
+                    doc.metadata["source"] = relative_path
+                    doc.metadata["file_id"] = str(uuid.uuid4())
+                    documents_dict[doc.metadata["file_id"]] = doc
+
+                # Display the results for this file type
+                st.write(
+                    f"Processed {len(loaded_documents)} documents with extension {ext}."
+                )
 
         except Exception as e:
             st.write(f"Error processing file type: {ext}, Exception: {str(e)}")
 
+    return documents_dict, file_type_counts
 
-def load_and_split_text(local_path):
-    # root_dir = "./fake-repo"
-    root_dir = local_path
-    file_types = [".html", ".css", ".js", ".md"]
 
-    docs = []
-    for file_type in file_types:
+def split_documents(documents_dict):
+    split_documents_dict = {}
+
+    for file_id, doc in documents_dict.items():
         try:
-            # Create a loader for the current file type
-            loader = DirectoryLoader(
-                root_dir, glob=f"**/*{file_type}", loader_cls=TextLoader
+            ext = os.path.splitext(doc.metadata["source"])[1]
+            lang = get_language_from_extension(ext)
+            splitter = RecursiveCharacterTextSplitter.from_language(
+                language=lang, chunk_size=60, chunk_overlap=0
+            )
+            split_docs = splitter.create_documents([doc.page_content])
+            for split_doc in split_docs:
+                split_doc.metadata.update(
+                    doc.metadata
+                )  # Copy metadata from original doc
+                split_documents_dict[
+                    str(uuid.uuid4())
+                ] = split_doc  # Store split documents with unique IDs
+
+        except Exception as e:
+            st.write(
+                f"Error splitting document: {doc.metadata['source']}, Exception: {str(e)}"
             )
 
-            # Load and split the documents
-            docs.extend(loader.load_and_split())
-        except Exception as e:
-            st.write(f"Error processing file type: {file_type}, Exception: {str(e)}")
-            pass
-
-    return docs
+    return split_documents_dict
 
 
-def text_split(docs):
-    text_splitter = CharacterTextSplitter(chunk_size=4000, chunk_overlap=0)
-    chunks = text_splitter.split_documents(docs)
-    # return [doc.content for doc in chunks]
-    return chunks
+def get_language_from_extension(ext):
+    # Simplified mapping from file extension to LangChain Language enum
+    ext_to_lang = {
+        ".cpp": Language.CPP,
+        ".go": Language.GO,
+        ".java": Language.JAVA,
+        ".js": Language.JS,
+        ".jsx": Language.JS,
+        ".ts": Language.JS,
+        ".tsx": Language.JS,
+        ".php": Language.PHP,
+        ".proto": Language.PROTO,
+        ".py": Language.PYTHON,
+        ".rst": Language.RST,
+        ".rb": Language.RUBY,
+        ".rs": Language.RUST,
+        ".scala": Language.SCALA,
+        ".swift": Language.SWIFT,
+        ".md": Language.MARKDOWN,
+        ".tex": Language.LATEX,
+        ".html": Language.HTML,
+        ".htm": Language.HTML,
+        ".sol": Language.SOL,
+        ".css": Language.MARKDOWN,
+        ".txt": Language.MARKDOWN,
+        ".json": Language.MARKDOWN,
+    }
+    return ext_to_lang.get(ext, Language.MARKDOWN)
 
 
 def get_vectorstore(chunks):
@@ -124,25 +239,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# def load_text():
-#     root_dir = "./fake-repo"
-
-#     docs = []
-#     for dirpath, dirnames, filenames in os.walk(root_dir):
-#         for file in filenames:
-#             if file.endswith((".html", ".css", ".js", ".md")):
-#                 try:
-#                     loader = TextLoader(os.path.join(dirpath, file), encoding="utf-8")
-#                     docs.extend(loader.load_and_split())
-#                 except Exception as e:
-#                     st.write(f"Error processing file: {file}, Exception: {str(e)}")
-#                     pass
-#     return docs
-
-
-# def text_split(docs):
-#     text_splitter = CharacterTextSplitter(chunk_size=4000, chunk_overlap=0)
-#     chunks = text_splitter.split_documents(docs)
-#     return [doc.content for doc in chunks]
