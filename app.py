@@ -1,13 +1,14 @@
 import streamlit as st
 from dotenv import load_dotenv
 import os
-from langchain.document_loaders import TextLoader, DirectoryLoader, JSONLoader
+from langchain.document_loaders import TextLoader, DirectoryLoader
 from langchain.text_splitter import (
     RecursiveCharacterTextSplitter,
     Language,
 )
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.vectorstores import DeepLake
 from langchain.vectorstores import FAISS
 from langchain.chat_models import ChatOpenAI
 from langchain.memory import ConversationBufferMemory
@@ -70,29 +71,21 @@ def load_github_repo(local_path):
                         documents_dict[doc.metadata["file_id"]] = doc
 
                     # Display the results for this file type
-                    st.write(
-                        f"Processed {len(loaded_documents)} documents with extension {ext}."
-                    )
+                    # st.write(
+                    #     f"Processed {len(loaded_documents)} documents with extension {ext}."
+                    # )
 
             except Exception as e:
                 st.write(f"Error processing file type: {ext}, Exception: {str(e)}")
 
-        # Process text files
+    # Process text files
     for ext in text_extensions:
         glob_pattern = f"**/*{ext}"
         try:
-            # Select appropriate loader class based on extension
-            if ext == ".json":
-                loader_cls = JSONLoader
-            elif ext == ".txt":
-                loader_cls = TextLoader
-            else:
-                raise ValueError(f"Unsupported extension {ext} encountered.")
-
             loader = DirectoryLoader(
                 local_path,
                 glob=glob_pattern,
-                loader_cls=loader_cls,  # Use selected loader class
+                loader_cls=TextLoader,
             )
             loaded_documents = loader.load() if callable(loader.load) else []
             if loaded_documents:
@@ -113,14 +106,15 @@ def load_github_repo(local_path):
                     documents_dict[doc.metadata["file_id"]] = doc
 
                 # Display the results for this file type
-                st.write(
-                    f"Processed {len(loaded_documents)} documents with extension {ext}."
-                )
+                # st.write(
+                #     f"Processed {len(loaded_documents)} documents with extension {ext}."
+                # )
 
         except Exception as e:
             st.write(f"Error processing file type: {ext}, Exception: {str(e)}")
 
-    return documents_dict, file_type_counts
+    # st.write(dict(documents_dict))
+    return documents_dict
 
 
 def split_documents(documents_dict):
@@ -131,7 +125,7 @@ def split_documents(documents_dict):
             ext = os.path.splitext(doc.metadata["source"])[1]
             lang = get_language_from_extension(ext)
             splitter = RecursiveCharacterTextSplitter.from_language(
-                language=lang, chunk_size=60, chunk_overlap=0
+                language=lang, chunk_size=1000, chunk_overlap=0
             )
             split_docs = splitter.create_documents([doc.page_content])
             for split_doc in split_docs:
@@ -146,7 +140,7 @@ def split_documents(documents_dict):
             st.write(
                 f"Error splitting document: {doc.metadata['source']}, Exception: {str(e)}"
             )
-
+    st.write(split_documents_dict)
     return split_documents_dict
 
 
@@ -173,16 +167,26 @@ def get_language_from_extension(ext):
         ".html": Language.HTML,
         ".htm": Language.HTML,
         ".sol": Language.SOL,
-        ".css": Language.MARKDOWN,
+        ".css": Language.HTML,
         ".txt": Language.MARKDOWN,
         ".json": Language.MARKDOWN,
     }
     return ext_to_lang.get(ext, Language.MARKDOWN)
 
 
+# def get_vectorstore(chunks):
+#     embeddings = OpenAIEmbeddings()
+#     vectorstore = FAISS.from_texts(texts=chunks, embedding=embeddings)
+#     return vectorstore
+
+
 def get_vectorstore(chunks):
     embeddings = OpenAIEmbeddings()
-    vectorstore = FAISS.from_texts(texts=chunks, embedding=embeddings)
+    # vectorstore = FAISS.from_texts(texts=chunks, embedding=embeddings)
+    dataset_path = "hub://mvavassori/text_embedding"
+    vectorstore = DeepLake.from_documents(
+        chunks, dataset_path=dataset_path, embedding=embeddings
+    )
     return vectorstore
 
 
@@ -197,7 +201,7 @@ def get_conversation_chain(vectorstore):
 
 def handle_user_input(user_input):
     if st.session_state.conversation is not None:
-        response = st.session_state.conversation({"input": user_input})
+        response = st.session_state.conversation({"question": user_input})
         st.write(response)
     else:
         st.write("Please click 'Start Processing' to initialize the conversation.")
@@ -227,10 +231,9 @@ def main():
             with tempfile.TemporaryDirectory() as local_path:
                 if clone_github_repo(github_url, local_path):
                     # get code files
-                    # docs = load_and_split_text(local_path)
-                    load_github_repo(local_path)
+                    docs = load_github_repo(local_path)
                     # get code chunks
-                    # chunks = text_split(docs)
+                    chunks = split_documents(docs)
                     # create vector store
                     # vectorstore = get_vectorstore(chunks)
                     # create conversation chain
