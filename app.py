@@ -17,6 +17,20 @@ from htmlTemplates import css, bot_template, user_template
 import tempfile
 import subprocess
 import uuid
+import ast
+
+
+class Document:
+    def __init__(self, page_content, metadata):
+        self.page_content = page_content
+        self.metadata = metadata
+
+
+def convert_to_document(doc_str):
+    doc_dict = eval(doc_str)
+    page_content = doc_dict["page_content"]
+    metadata = doc_dict["metadata"]
+    return Document(page_content, metadata)
 
 
 def clone_github_repo(github_url, local_path):
@@ -113,7 +127,7 @@ def load_github_repo(local_path):
         except Exception as e:
             st.write(f"Error processing file type: {ext}, Exception: {str(e)}")
 
-    # st.write(dict(documents_dict))
+    st.write(dict(documents_dict))
     return documents_dict
 
 
@@ -122,6 +136,7 @@ def split_documents(documents_dict):
 
     for file_id, doc in documents_dict.items():
         try:
+            # doc = convert_to_document(doc_str)
             ext = os.path.splitext(doc.metadata["source"])[1]
             lang = get_language_from_extension(ext)
             splitter = RecursiveCharacterTextSplitter.from_language(
@@ -174,20 +189,24 @@ def get_language_from_extension(ext):
     return ext_to_lang.get(ext, Language.MARKDOWN)
 
 
-# def get_vectorstore(chunks):
-#     embeddings = OpenAIEmbeddings()
-#     vectorstore = FAISS.from_texts(texts=chunks, embedding=embeddings)
-#     return vectorstore
+def create_vectorstore(chunks):  # Change name to create vectorstore
+    dataset_path = "hub://mvavassori/repo_embedding"
+
+    documents = list(chunks.values())
+
+    embeddings = OpenAIEmbeddings(disallowed_special=())
+    db = DeepLake(dataset_path=dataset_path, embedding_function=embeddings)
+    db.add_documents(documents)
 
 
-def get_vectorstore(chunks):
-    embeddings = OpenAIEmbeddings()
-    # vectorstore = FAISS.from_texts(texts=chunks, embedding=embeddings)
-    dataset_path = "hub://mvavassori/text_embedding"
-    vectorstore = DeepLake.from_documents(
-        chunks, dataset_path=dataset_path, embedding=embeddings
+def load_vectorstore(dataset_path):
+    embeddings = OpenAIEmbeddings(disallowed_special=())
+    db = DeepLake(
+        dataset_path=dataset_path,
+        read_only=True,
+        embedding_function=embeddings,
     )
-    return vectorstore
+    return db
 
 
 def get_conversation_chain(vectorstore):
@@ -200,11 +219,19 @@ def get_conversation_chain(vectorstore):
 
 
 def handle_user_input(user_input):
-    if st.session_state.conversation is not None:
-        response = st.session_state.conversation({"question": user_input})
-        st.write(response)
-    else:
-        st.write("Please click 'Start Processing' to initialize the conversation.")
+    response = st.session_state.conversation({"question": user_input})
+    st.session_state.chat_history = response["chat_history"]
+
+    for i, message in enumerate(st.session_state.chat_history):
+        if i % 2 == 0:
+            st.write(
+                user_template.replace("{{MSG}}", message.content),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.write(
+                bot_template.replace("{{MSG}}", message.content), unsafe_allow_html=True
+            )
 
 
 def main():
@@ -215,17 +242,6 @@ def main():
     # create an input field for the GitHub repo URL
     github_url = st.text_input("Enter GitHub repo URL")
 
-    if "conversation" not in st.session_state:
-        st.session_state.conversation = None
-
-    st.header("Chat with repo")
-    user_input = st.text_input("Ask question to repo")
-    if user_input:
-        handle_user_input(user_input)
-
-    # st.write(user_template, unsafe_allow_html=True)
-    # st.write(bot_template, unsafe_allow_html=True)
-
     if st.button("Start Processing"):
         with st.spinner("Processing..."):
             with tempfile.TemporaryDirectory() as local_path:
@@ -235,9 +251,27 @@ def main():
                     # get code chunks
                     chunks = split_documents(docs)
                     # create vector store
-                    # vectorstore = get_vectorstore(chunks)
-                    # create conversation chain
-                    # st.session_state.conversation = get_conversation_chain(vectorstore)
+                    create_vectorstore(chunks)
+
+    if st.button("Load dataset and start chatting"):
+        with st.spinner("Processing..."):
+            # load vector store
+            vectorstore = load_vectorstore("hub://mvavassori/repo_embedding")
+            # create conversation chain
+            st.session_state.conversation = get_conversation_chain(vectorstore)
+
+    if "conversation" not in st.session_state:
+        st.session_state.conversation = None
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = None
+
+    st.header("Chat with repo")
+    user_input = st.text_input("Ask question to repo")
+    if user_input:
+        handle_user_input(user_input)
+
+    # st.write(user_template, unsafe_allow_html=True)
+    # st.write(bot_template, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
