@@ -1,7 +1,8 @@
 import streamlit as st
 from dotenv import load_dotenv
 import os
-from langchain.document_loaders import TextLoader, DirectoryLoader
+from htmlTemplates import css, bot_template, user_template
+from langchain.document_loaders import GitLoader
 from langchain.text_splitter import (
     RecursiveCharacterTextSplitter,
     Language,
@@ -9,134 +10,57 @@ from langchain.text_splitter import (
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.vectorstores import DeepLake
-from langchain.vectorstores import FAISS
 from langchain.chat_models import ChatOpenAI
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
-from htmlTemplates import css, bot_template, user_template
 import tempfile
-import subprocess
-import uuid
-import ast
+from langchain.chains import LLMChain
+from langchain import PromptTemplate
 
 
-class Document:
-    def __init__(self, page_content, metadata):
-        self.page_content = page_content
-        self.metadata = metadata
+def load_github_repo(github_url, local_path):
+    loader = GitLoader(
+        clone_url=github_url,
+        repo_path=local_path,
+        branch="master",
+    )
+    docs = loader.load()
+    return docs
 
 
-def convert_to_document(doc_str):
-    doc_dict = eval(doc_str)
-    page_content = doc_dict["page_content"]
-    metadata = doc_dict["metadata"]
-    return Document(page_content, metadata)
+# def split_documents(documents_dict):
+#     split_documents_dict = {}
+
+#     for file_id, doc in documents_dict.items():
+#         try:
+#             # doc = convert_to_document(doc_str)
+#             ext = os.path.splitext(doc.metadata["source"])[1]
+#             lang = get_language_from_extension(ext)
+#             splitter = RecursiveCharacterTextSplitter.from_language(
+#                 language=lang, chunk_size=1000, chunk_overlap=0
+#             )
+#             split_docs = splitter.create_documents([doc.page_content])
+#             for split_doc in split_docs:
+#                 split_doc.metadata.update(
+#                     doc.metadata
+#                 )  # Copy metadata from original doc
+#                 split_documents_dict[
+#                     str(uuid.uuid4())
+#                 ] = split_doc  # Store split documents with unique IDs
+
+#         except Exception as e:
+#             st.write(
+#                 f"Error splitting document: {doc.metadata['source']}, Exception: {str(e)}"
+#             )
+#     st.write(split_documents_dict)
+#     return split_documents_dict
 
 
-def clone_github_repo(github_url, local_path):
-    try:
-        subprocess.run(["git", "clone", github_url, local_path], check=True)
-        return True
-    except subprocess.CalledProcessError as e:
-        st.error(f"Failed to clone repository: {e}")
-        return False
+def split_documents(documents_list):
+    split_documents_list = []
 
-
-def load_github_repo(local_path):
-    # Language to extension mapping
-    lang_to_ext = {
-        "cpp": [".cpp"],
-        "go": [".go"],
-        "java": [".java"],
-        "js": [".js", ".jsx", ".ts", ".tsx"],
-        "php": [".php"],
-        "proto": [".proto"],
-        "python": [".py"],
-        "rst": [".rst"],
-        "ruby": [".rb"],
-        "rust": [".rs"],
-        "scala": [".scala"],
-        "swift": [".swift"],
-        "markdown": [".md"],
-        "latex": [".tex"],
-        "html": [".html", ".htm", ".css", "scss"],
-        "sol": [".sol"],
-    }
-
-    text_extensions = {".txt", ".json"}
-
-    documents_dict = {}
-    file_type_counts = {}
-
-    # Process code files
-    for lang, exts in lang_to_ext.items():
-        for ext in exts:
-            glob_pattern = f"**/*{ext}"
-            try:
-                loader = DirectoryLoader(local_path, glob=glob_pattern)
-                loaded_documents = loader.load() if callable(loader.load) else []
-                if loaded_documents:
-                    file_type_counts[ext] = len(loaded_documents)
-                    for doc in loaded_documents:
-                        file_path = doc.metadata["source"]
-                        relative_path = os.path.relpath(file_path, local_path)
-                        doc.metadata["source"] = relative_path
-                        doc.metadata["file_id"] = str(uuid.uuid4())
-                        documents_dict[doc.metadata["file_id"]] = doc
-
-                    # Display the results for this file type
-                    # st.write(
-                    #     f"Processed {len(loaded_documents)} documents with extension {ext}."
-                    # )
-
-            except Exception as e:
-                st.write(f"Error processing file type: {ext}, Exception: {str(e)}")
-
-    # Process text files
-    for ext in text_extensions:
-        glob_pattern = f"**/*{ext}"
+    for doc in documents_list:
         try:
-            loader = DirectoryLoader(
-                local_path,
-                glob=glob_pattern,
-                loader_cls=TextLoader,
-            )
-            loaded_documents = loader.load() if callable(loader.load) else []
-            if loaded_documents:
-                # Filter out package-lock.json after loading if dealing with json files
-                if ext == ".json":
-                    loaded_documents = [
-                        doc
-                        for doc in loaded_documents
-                        if "package-lock.json" not in doc.metadata["source"]
-                    ]
-
-                file_type_counts[ext] = len(loaded_documents)
-                for doc in loaded_documents:
-                    file_path = doc.metadata["source"]
-                    relative_path = os.path.relpath(file_path, local_path)
-                    doc.metadata["source"] = relative_path
-                    doc.metadata["file_id"] = str(uuid.uuid4())
-                    documents_dict[doc.metadata["file_id"]] = doc
-
-                # Display the results for this file type
-                # st.write(
-                #     f"Processed {len(loaded_documents)} documents with extension {ext}."
-                # )
-
-        except Exception as e:
-            st.write(f"Error processing file type: {ext}, Exception: {str(e)}")
-
-    st.write(dict(documents_dict))
-    return documents_dict
-
-
-def split_documents(documents_dict):
-    split_documents_dict = {}
-
-    for file_id, doc in documents_dict.items():
-        try:
-            # doc = convert_to_document(doc_str)
             ext = os.path.splitext(doc.metadata["source"])[1]
             lang = get_language_from_extension(ext)
             splitter = RecursiveCharacterTextSplitter.from_language(
@@ -147,16 +71,15 @@ def split_documents(documents_dict):
                 split_doc.metadata.update(
                     doc.metadata
                 )  # Copy metadata from original doc
-                split_documents_dict[
-                    str(uuid.uuid4())
-                ] = split_doc  # Store split documents with unique IDs
+                split_documents_list.append(
+                    split_doc
+                )  # Store split documents in a list
 
         except Exception as e:
             st.write(
                 f"Error splitting document: {doc.metadata['source']}, Exception: {str(e)}"
             )
-    st.write(split_documents_dict)
-    return split_documents_dict
+    return split_documents_list
 
 
 def get_language_from_extension(ext):
@@ -189,14 +112,11 @@ def get_language_from_extension(ext):
     return ext_to_lang.get(ext, Language.MARKDOWN)
 
 
-def create_vectorstore(chunks):  # Change name to create vectorstore
-    dataset_path = "hub://mvavassori/repo_embedding"
-
-    documents = list(chunks.values())
-
+def create_vectorstore(chunks, dataset_path):
     embeddings = OpenAIEmbeddings(disallowed_special=())
     db = DeepLake(dataset_path=dataset_path, embedding_function=embeddings)
-    db.add_documents(documents)
+    db.add_documents(chunks)
+    return db
 
 
 def load_vectorstore(dataset_path):
@@ -209,11 +129,41 @@ def load_vectorstore(dataset_path):
     return db
 
 
-def get_conversation_chain(vectorstore):
-    llm = ChatOpenAI()
+def get_conversation_chain(vectorstore, gpt_model):
+    llm = ChatOpenAI(model=gpt_model, streaming=True, temperature=0.5)
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+    # TODO: Prompt template
+    ###
+    # _template = """Given the following conversation and a follow up question, rephrase the follow up question to be a standalone question, in its original language.\
+    # Make sure to avoid using any unclear pronouns.
+
+    # Chat History:
+    # {chat_history}
+    # Follow Up Input: {question}
+    # Standalone question:"""
+    # CONDENSE_QUESTION_PROMPT = PromptTemplate.from_template(_template)
+    # condense_question_chain = LLMChain(
+    #     llm=llm,
+    #     prompt=CONDENSE_QUESTION_PROMPT,
+    # )
+    # qa = ConversationalRetrievalChain(
+    #     question_generator=condense_question_chain,
+    #     retriever=docsearch.as_retriever(),
+    #     memory=memory,
+    #     combine_docs_chain=final_qa_chain,
+    # )
+    # qa = ConversationalRetrievalChain(
+    #     question_generator=condense_question_chain,
+    #     retriever=docsearch.as_retriever(),
+    #     memory=memory,
+    #     combine_docs_chain=final_qa_chain,
+    # )
+    ###
     conversation_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm, retriever=vectorstore.as_retriever(), memory=memory
+        llm=llm,
+        retriever=vectorstore.as_retriever(),
+        memory=memory,
+        # combine_docs_chain_kwargs={"prompt": prompt},
     )
     return conversation_chain
 
@@ -239,39 +189,61 @@ def main():
     st.set_page_config(page_title="Chat with repo")
     st.write(css, unsafe_allow_html=True)
 
-    # create an input field for the GitHub repo URL
-    github_url = st.text_input("Enter GitHub repo URL")
+    with st.sidebar:
+        """
+        Remember to add your `OPENAI_API_KEY` and `ACTIVELOOP_TOKEN` to your .env file.
+        """
+        gpt_model = st.selectbox("Select OpenAI GPT model", ("gpt-3.5-turbo", "gpt-4"))
 
-    if st.button("Start Processing"):
-        with st.spinner("Processing..."):
-            with tempfile.TemporaryDirectory() as local_path:
-                if clone_github_repo(github_url, local_path):
+        st.subheader("If you don't have an existing Activeloop dataset enter below")
+        github_url = st.text_input(
+            "Enter GitHub repo URL (for example: `https://github.com/username/my_repo`)"
+        )
+        activeloop_url = st.text_input(
+            "Enter the Activeloop dataset URL where you wish to save your dataset (for example: `hub://username/my_dataset`)"
+        )
+
+        if st.button("Create dataset and start chatting"):
+            with st.spinner("Processing..."):
+                with tempfile.TemporaryDirectory() as local_path:
+                    # if clone_github_repo(github_url, local_path):
                     # get code files
-                    docs = load_github_repo(local_path)
+                    # docs = load_github_repo(local_path)
+                    docs = load_github_repo(github_url, local_path)
                     # get code chunks
                     chunks = split_documents(docs)
                     # create vector store
-                    create_vectorstore(chunks)
+                    vectorstore = create_vectorstore(chunks, activeloop_url)
+                    # create conversation chain
+                    st.session_state.conversation = get_conversation_chain(
+                        vectorstore, gpt_model
+                    )
 
-    if st.button("Load dataset and start chatting"):
-        with st.spinner("Processing..."):
-            # load vector store
-            vectorstore = load_vectorstore("hub://mvavassori/repo_embedding")
-            # create conversation chain
-            st.session_state.conversation = get_conversation_chain(vectorstore)
+        st.subheader("If you already have an existing Activeloop dataset enter below")
+
+        activeloop_url = st.text_input(
+            "Enter your existing Activeloop dataset URL here (for  example: `hub://username/my_dataset`)"
+        )
+
+        if st.button("Load dataset and start chatting"):
+            with st.spinner("Processing..."):
+                # load vector store
+                vectorstore = load_vectorstore(activeloop_url)
+                # create conversation chain
+                st.session_state.conversation = get_conversation_chain(
+                    vectorstore, gpt_model
+                )
 
     if "conversation" not in st.session_state:
         st.session_state.conversation = None
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = None
 
+    # Error handling?
     st.header("Chat with repo")
-    user_input = st.text_input("Ask question to repo")
+    user_input = st.text_area("Ask question to repo")
     if user_input:
         handle_user_input(user_input)
-
-    # st.write(user_template, unsafe_allow_html=True)
-    # st.write(bot_template, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
