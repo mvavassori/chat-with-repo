@@ -15,7 +15,12 @@ from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 import tempfile
 from langchain.chains import LLMChain
-from langchain import PromptTemplate
+from langchain.prompts.chat import (
+    ChatPromptTemplate,
+    SystemMessagePromptTemplate,
+    AIMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+)
 
 
 def load_github_repo(github_url, local_path):
@@ -132,38 +137,41 @@ def load_vectorstore(dataset_path):
 def get_conversation_chain(vectorstore, gpt_model):
     llm = ChatOpenAI(model=gpt_model, streaming=True, temperature=0.5)
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    # TODO: Prompt template
-    ###
-    # _template = """Given the following conversation and a follow up question, rephrase the follow up question to be a standalone question, in its original language.\
-    # Make sure to avoid using any unclear pronouns.
+    # Define your system message template
+    general_system_template = """You are a superintelligent AI that answers questions about codebases.
+    You are:
+    - helpful & friendly
+    - good at answering complex questions in simple language
+    - an expert in all programming languages
+    - able to infer the intent of the user's question
 
-    # Chat History:
-    # {chat_history}
-    # Follow Up Input: {question}
-    # Standalone question:"""
-    # CONDENSE_QUESTION_PROMPT = PromptTemplate.from_template(_template)
-    # condense_question_chain = LLMChain(
-    #     llm=llm,
-    #     prompt=CONDENSE_QUESTION_PROMPT,
-    # )
-    # qa = ConversationalRetrievalChain(
-    #     question_generator=condense_question_chain,
-    #     retriever=docsearch.as_retriever(),
-    #     memory=memory,
-    #     combine_docs_chain=final_qa_chain,
-    # )
-    # qa = ConversationalRetrievalChain(
-    #     question_generator=condense_question_chain,
-    #     retriever=docsearch.as_retriever(),
-    #     memory=memory,
-    #     combine_docs_chain=final_qa_chain,
-    # )
-    ###
+    The user will ask a question about their codebase, and you will answer it.
+
+    When the user asks their question, you will answer it by searching the codebase for the answer.
+    Answer the question using the code file(s) below:
+    ----------------
+        {context}"""
+    # Define your user message template
+    general_user_template = "Question:```{question}```"
+
+    # Create message prompt templates from your message templates
+    system_message_prompt = SystemMessagePromptTemplate.from_template(
+        general_system_template
+    )
+    user_message_prompt = HumanMessagePromptTemplate.from_template(
+        general_user_template
+    )
+
+    # Create a chat prompt template from your message prompt templates
+    qa_prompt = ChatPromptTemplate.from_messages(
+        [system_message_prompt, user_message_prompt]
+    )
+    st.write("qa_prompt", qa_prompt)
     conversation_chain = ConversationalRetrievalChain.from_llm(
         llm=llm,
         retriever=vectorstore.as_retriever(),
         memory=memory,
-        # combine_docs_chain_kwargs={"prompt": prompt},
+        combine_docs_chain_kwargs={"prompt": qa_prompt},
     )
     return conversation_chain
 
