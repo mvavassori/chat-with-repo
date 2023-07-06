@@ -22,11 +22,11 @@ from langchain.prompts.chat import (
 )
 
 
-def load_github_repo(github_url, local_path):
+def load_github_repo(github_url, local_path, repo_branch):
     loader = GitLoader(
         clone_url=github_url,
         repo_path=local_path,
-        branch="master",
+        branch=repo_branch,
     )
     docs = loader.load()
     return docs
@@ -178,6 +178,9 @@ def main():
         github_url = st.text_input(
             "Enter GitHub repo URL (for example: `https://github.com/username/my_repo`)"
         )
+        repo_branch = st.text_input(
+            "Enter GitHub repo branch (for example: `master`)", "master"
+        )
         activeloop_url = st.text_input(
             "Enter the Activeloop dataset URL where you wish to save your dataset (for example: `hub://username/my_dataset`)"
         )
@@ -186,7 +189,9 @@ def main():
             with st.spinner("Processing..."):
                 with tempfile.TemporaryDirectory() as local_path:
                     # get code files
-                    docs = load_github_repo(github_url, local_path)
+                    docs = load_github_repo(
+                        github_url, local_path, repo_branch="master"
+                    )
                     # get code chunks
                     chunks = split_documents(docs)
                     # create vector store
