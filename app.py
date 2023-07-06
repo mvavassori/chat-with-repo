@@ -2,6 +2,7 @@ import streamlit as st
 from dotenv import load_dotenv
 import os
 from htmlTemplates import css, bot_template, user_template
+import langchain
 from langchain.document_loaders import GitLoader
 from langchain.text_splitter import (
     RecursiveCharacterTextSplitter,
@@ -14,11 +15,9 @@ from langchain.chat_models import ChatOpenAI
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 import tempfile
-from langchain.chains import LLMChain
 from langchain.prompts.chat import (
     ChatPromptTemplate,
     SystemMessagePromptTemplate,
-    AIMessagePromptTemplate,
     HumanMessagePromptTemplate,
 )
 
@@ -31,34 +30,6 @@ def load_github_repo(github_url, local_path):
     )
     docs = loader.load()
     return docs
-
-
-# def split_documents(documents_dict):
-#     split_documents_dict = {}
-
-#     for file_id, doc in documents_dict.items():
-#         try:
-#             # doc = convert_to_document(doc_str)
-#             ext = os.path.splitext(doc.metadata["source"])[1]
-#             lang = get_language_from_extension(ext)
-#             splitter = RecursiveCharacterTextSplitter.from_language(
-#                 language=lang, chunk_size=1000, chunk_overlap=0
-#             )
-#             split_docs = splitter.create_documents([doc.page_content])
-#             for split_doc in split_docs:
-#                 split_doc.metadata.update(
-#                     doc.metadata
-#                 )  # Copy metadata from original doc
-#                 split_documents_dict[
-#                     str(uuid.uuid4())
-#                 ] = split_doc  # Store split documents with unique IDs
-
-#         except Exception as e:
-#             st.write(
-#                 f"Error splitting document: {doc.metadata['source']}, Exception: {str(e)}"
-#             )
-#     st.write(split_documents_dict)
-#     return split_documents_dict
 
 
 def split_documents(documents_list):
@@ -135,7 +106,8 @@ def load_vectorstore(dataset_path):
 
 
 def get_conversation_chain(vectorstore, gpt_model):
-    llm = ChatOpenAI(model=gpt_model, streaming=True, temperature=0.5)
+    langchain.verbose = False
+    llm = ChatOpenAI(model=gpt_model, temperature=0.5)
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
     # Define your system message template
     general_system_template = """You are a superintelligent AI that answers questions about codebases.
@@ -166,7 +138,6 @@ def get_conversation_chain(vectorstore, gpt_model):
     qa_prompt = ChatPromptTemplate.from_messages(
         [system_message_prompt, user_message_prompt]
     )
-    st.write("qa_prompt", qa_prompt)
     conversation_chain = ConversationalRetrievalChain.from_llm(
         llm=llm,
         retriever=vectorstore.as_retriever(),
@@ -214,9 +185,7 @@ def main():
         if st.button("Create dataset and start chatting"):
             with st.spinner("Processing..."):
                 with tempfile.TemporaryDirectory() as local_path:
-                    # if clone_github_repo(github_url, local_path):
                     # get code files
-                    # docs = load_github_repo(local_path)
                     docs = load_github_repo(github_url, local_path)
                     # get code chunks
                     chunks = split_documents(docs)
