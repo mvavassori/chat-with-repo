@@ -2,7 +2,7 @@
 
 ## Description
 
-A Streamlit application for creating a chatbot that can interact with codebases.
+A chatbot created with Streamlit (a simple python ui framework) that can interact with codebases.
 
 The application allows users to select an OpenAI GPT model, enter a GitHub repository URL, and specify an Activeloop dataset URL. It then loads the codebase from the GitHub repository, splits the code into chunks, creates a vector store, and initializes a conversation chain using the selected GPT model. Users can then start chatting with the chatbot.
 
