@@ -44,7 +44,7 @@ jmespath==1.0.1
 joblib==1.2.0
 jq==1.4.1
 jsonschema==4.17.3
-langchain==0.0.209
+langchain==0.0.271
 langchainplus-sdk==0.0.17
 lxml==4.9.2
 Markdown==3.4.3
